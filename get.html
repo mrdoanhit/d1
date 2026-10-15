@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Công cụ xuất file playlist.json từ Google Drive</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            max-width: 700px;
+            margin: 40px auto;
+            padding: 20px;
+            background-color: #f4f6f9;
+            color: #333;
+            text-align: center;
+        }
+        .container {
+            background: white;
+            padding: 35px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+        h2 { color: #1e88e5; margin-bottom: 10px; }
+        .description { color: #666; font-size: 15px; margin-bottom: 25px; }
+        button {
+            background-color: #1e88e5;
+            color: white;
+            padding: 14px 28px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: background 0.2s, transform 0.1s;
+            box-shadow: 0 2px 6px rgba(30,136,229,0.3);
+        }
+        button:hover { background-color: #1565c0; }
+        button:active { transform: scale(0.98); }
+        button:disabled {
+            background-color: #b0bec5;
+            box-shadow: none;
+            cursor: not-allowed;
+        }
+        #status {
+            margin-top: 25px;
+            font-size: 15px;
+            line-height: 1.6;
+            color: #424242;
+            background: #e3f2fd;
+            padding: 12px;
+            border-radius: 6px;
+            display: inline-block;
+            min-width: 80%;
+        }
+        #download-zone {
+            margin-top: 30px;
+            display: none;
+            border-top: 2px dashed #e0e0e0;
+            padding-top: 20px;
+        }
+        .download-btn {
+            background-color: #2e7d32;
+            box-shadow: 0 2px 6px rgba(46,125,50,0.3);
+        }
+        .download-btn:hover { background-color: #1b5e20; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Bộ xuất dữ liệu Google Drive sang JSON</h2>
+    <p class="description">Công cụ tự động quét toàn bộ thư mục con (bao gồm cả MP3_9nhac) và tệp âm thanh bên trong mục <strong>1ChanhKien_MinhHue</strong>.</p>
+    
+    <button id="scan-btn" onclick="buildFullPlaylist()">Bắt đầu quét Drive</button>
+    
+    <br>
+    <div id="status">Sẵn sàng khởi chạy...</div>
+
+    <div id="download-zone">
+        <p style="color: #2e7d32; font-weight: bold;">🎉 Đã quét toàn bộ dữ liệu Drive thành công!</p>
+        <button class="download-btn" id="download-btn">📥 Tải file playlist.json về máy</button>
+    </div>
+</div>
+
+<script>
+    const API_KEY = 'AIzaSyDqfq8rh6qBQcoBhhqc26L8g34dhW6c3dc'; 
+    const ROOT_FOLDER_ID = '16R1XuVaMaS0HOuwqvN721zCv9VVqeDaI'; 
+
+    const statusEl = document.getElementById('status');
+    const scanBtn = document.getElementById('scan-btn');
+    const downloadZone = document.getElementById('download-zone');
+    const downloadBtn = document.getElementById('download-btn');
+
+    // Hàm tạo URL chính xác tuyệt đối đến máy chủ Google Drive API v3
+    function getGoogleApiUrl(query, fields, pageToken = '') {
+        let url = `https://googleapis.com{encodeURIComponent(query)}&fields=${encodeURIComponent(fields)}&pageSize=1000&key=${API_KEY}`;
+        if (pageToken) {
+            url += `&pageToken=${encodeURIComponent(pageToken)}`;
+        }
+        return url;
+    }
+
+    async function fetchAllFilesWithPagination(query, fields) {
+        let allFiles = [];
+        let nextPageToken = "";
+        
+        do {
+            const url = getGoogleApiUrl(query, fields, nextPageToken);
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.error ? errData.error.message : "Lỗi API");
+                }
+                const data = await response.json();
+                if (data.files && data.files.length > 0) {
+                    allFiles = allFiles.concat(data.files);
+                }
+                nextPageToken = data.nextPageToken || "";
+            } catch (err) {
+                console.error("Lỗi fetch:", err);
+                throw err;
+            }
+        } while (nextPageToken);
+        
+        return allFiles;
+    }
+
+    async function buildFullPlaylist() {
+        scanBtn.disabled = true;
+        downloadZone.style.display = "none";
+        statusEl.innerHTML = "⏳ Đang kết nối Drive và khởi tạo tiến trình...";
+        
+        let finalPlaylist = {};
+        let totalFilesCount = 0;
+
+        try {
+            let foldersToScan = [{ id: ROOT_FOLDER_ID, name: "Nhạc Hệ Thống" }];
+            let folderIndex = 0;
+
+            while (folderIndex < foldersToScan.length) {
+                const currentFolder = foldersToScan[folderIndex];
+                statusEl.innerHTML = `📂 Đang lập bản đồ thư mục: <strong>${currentFolder.name}</strong>...`;
+
+                const subFolderQuery = `'${currentFolder.id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+                try {
+                    const subFolders = await fetchAllFilesWithPagination(subFolderQuery, "nextPageToken, files(id, name)");
+                    subFolders.forEach(sf => {
+                        foldersToScan.push({ id: sf.id, name: sf.name });
+                    });
+                } catch (e) {
+                    console.warn("Bỏ qua thư mục con:", currentFolder.name);
+                }
+                folderIndex++;
+            }
+
+            statusEl.innerHTML = `🎵 Tìm thấy tổng cộng ${foldersToScan.length} thư mục. Bắt đầu gom file âm thanh...`;
+
+            for (let i = 0; i < foldersToScan.length; i++) {
+                const folder = foldersToScan[i];
+                statusEl.innerHTML = `⚡ Đang hốt file âm thanh từ danh mục (${i + 1}/${foldersToScan.length}): <strong>${folder.name}</strong>...`;
+
+                const musicQuery = `'${folder.id}' in parents and mimeType contains 'audio/' and trashed = false`;
+                const folderFiles = await fetchAllFilesWithPagination(musicQuery, "nextPageToken, files(id, name)");
+
+                if (folderFiles && folderFiles.length > 0) {
+                    const keyName = (folder.id === ROOT_FOLDER_ID) ? "Nhạc Hệ Thống" : folder.name;
+                    if (!finalPlaylist[keyName]) {
+                        finalPlaylist[keyName] = [];
+                    }
+                    folderFiles.forEach(f => {
+                        finalPlaylist[keyName].push({ id: f.id, name: f.name });
+                        totalFilesCount++;
+                    });
+                }
+            }
+
+            if (totalFilesCount === 0) {
+                statusEl.innerHTML = "⚠️ Hoàn tất nhưng không tìm thấy tệp âm thanh nào.";
+                scanBtn.disabled = false;
+                return;
+            }
+
+            statusEl.innerHTML = "📝 Đang tiến hành sắp xếp danh sách từ A đến Z và phân trang...";
+            
+            let sortedPlaylist = {};
+            const ITEMS_PER_PAGE = 100;
+            
+            const sortedCategoryNames = Object.keys(finalPlaylist).sort((a, b) => {
+                if (a === "Nhạc Hệ Thống") return -1; 
+                if (b === "Nhạc Hệ Thống") return 1;
+                return a.localeCompare(b, 'vi', { sensitivity: 'base' });
+            });
+
+            sortedCategoryNames.forEach(category => {
+                let songs = finalPlaylist[category];
+                songs.sort((a, b) => a.name.localeCompare(b.name, 'vi', { sensitivity: 'base' }));
+
+                if (songs.length > ITEMS_PER_PAGE) {
+                    for (let index = 0; index < songs.length; index += ITEMS_PER_PAGE) {
+                        const pageNumber = Math.floor(index / ITEMS_PER_PAGE) + 1;
+                        const paginatedKey = category + " - Trang " + pageNumber;
+                        sortedPlaylist[paginatedKey] = songs.slice(index, index + ITEMS_PER_PAGE);
+                    }
+                } else {
+                    sortedPlaylist[category] = songs;
+                }
+            });
+
+            statusEl.innerHTML = `✅ Thành công! Tổng cộng quét được <strong>${totalFilesCount}</strong> bài hát.`;
+            downloadZone.style.display = "block";
+            scanBtn.disabled = false;
+
+            const newDownloadBtn = downloadBtn.cloneNode(true);
+            downloadBtn.parentNode.replaceChild(newDownloadBtn, downloadBtn);
+
+            newDownloadBtn.addEventListener('click', () => {
+                const jsonContent = JSON.stringify(sortedPlaylist, null, 4);
+                const blob = new Blob([jsonContent], { type: "application/json;charset=utf-8;" });
+                const url = URL.createObjectURL(blob);
+                
+                const downloadAnchor = document.createElement('a');
+                downloadAnchor.setAttribute("href", url);
+                downloadAnchor.setAttribute("download", "playlist.json");
+                document.body.appendChild(downloadAnchor);
+                downloadAnchor.click();
+                
+                document.body.removeChild(downloadAnchor);
+                URL.revokeObjectURL(url);
+            });
+
+        } catch (error) {
+            console.error(error);
+            statusEl.innerHTML = `❌ Đã xảy ra lỗi: <span style="color:red;">${error.message}</span>`;
+            scanBtn.disabled = false;
+        }
+    }
+</script>
+</body>
+</html>
